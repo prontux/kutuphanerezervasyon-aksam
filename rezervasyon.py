@@ -1,7 +1,7 @@
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import cv2
@@ -19,13 +19,23 @@ HEDEF_SEANS = "17:00"
 ON_HAZIRLIK_SEANS = "19:00"
 KOLTUK = "69-9"
 YEDEK_INDEX = 1  # 17:00 bulunamazsa listedeki 2. seçenek (index 0 = 1. seçenek)
-LOGIN_DENEME = 5
+LOGIN_DENEME = 30      # giriş için en fazla deneme (zaman sınırı da var)
+HAZIRLIK_SON = (23, 55)  # hazırlık (giriş + 19:00) en geç bu saate kadar tekrar denenir
+REZ_DENEME = 3         # 00:00 sonrası rezervasyon adımı için deneme sayısı
 
 print(f"Basliyor (Ön Hazırlık: {ON_HAZIRLIK_SEANS}, Rezervasyon: {HEDEF_SEANS}, Koltuk: {KOLTUK})")
 
 
 def simdi():
     return datetime.now(TZ)
+
+
+def hazirlik_son_zaman():
+    now = simdi()
+    if now.hour >= 12:
+        return now.replace(hour=HAZIRLIK_SON[0], minute=HAZIRLIK_SON[1], second=0, microsecond=0)
+    # Gece yarısından sonra elle test ediliyorsa 5 dakika tanı
+    return now + timedelta(minutes=5)
 
 
 def tc_sifre_al():
@@ -61,7 +71,11 @@ def captcha_oku(img, deneme_sayisi=10):
 
 def giris_yap(driver, tc, sifre):
     """Captcha yanlış okunursa sayfayı yenileyip tekrar dener. Başarılıysa True döner."""
+    son = hazirlik_son_zaman()
     for n in range(1, LOGIN_DENEME + 1):
+        if n > 1 and simdi() >= son:
+            print("Giriş için zaman sınırı doldu.")
+            break
         print(f"Giriş denemesi {n}/{LOGIN_DENEME}")
         try:
             driver.get(URL)
@@ -95,7 +109,10 @@ def giris_yap(driver, tc, sifre):
             lbtn = w.until(EC.presence_of_element_located((By.XPATH, "//button[@type='submit']")))
             driver.execute_script("arguments[0].click();", lbtn)
 
-            # Giriş başarılıysa "Rezervasyon" menüsü görünür
+            # Giriş başarılıysa giriş formu kaybolur ve "Rezervasyon" menüsü görünür
+            WebDriverWait(driver, 8).until(
+                EC.invisibility_of_element_located((By.NAME, "kullanici"))
+            )
             WebDriverWait(driver, 8).until(
                 EC.presence_of_element_located((By.XPATH, "//a[contains(., 'Rezervasyon')]"))
             )
@@ -113,9 +130,9 @@ def gece_yarisi_bekle():
         if now.hour == 0:
             print("Saat 00:00 oldu, işlem başlatılıyor!", now.strftime("%H:%M:%S.%f"))
             return
-        if now.hour not in (23,):
+        if now.hour not in (22, 23):
             # 23:00 ile 00:00 dışında bir saatteyse bekleyip saatlerce takılma
-            raise RuntimeError(f"Saat {now.strftime('%H:%M')} (TR). Beklenen aralık 23:xx. İşlem iptal.")
+            raise RuntimeError(f"Saat {now.strftime('%H:%M')} (TR). Beklenen aralık 22:xx-23:xx. İşlem iptal.")
         time.sleep(0.01)
 
 
@@ -137,6 +154,98 @@ def sonucu_dogrula(driver):
     return any(k in kucuk for k in basari)
 
 
+def hazirlik(driver, w, tc, sifre):
+    """Giriş + kütüphane + 19:00 seansı. Hata olursa exception fırlatır."""
+    if not giris_yap(driver, tc, sifre):
+        raise RuntimeError("Giriş yapılamadı (captcha/şifre).")
+
+    rmenu = w.until(EC.presence_of_element_located((By.XPATH, "//a[contains(., 'Rezervasyon')]")))
+    driver.execute_script("arguments[0].click();", rmenu)
+
+    kbtn = w.until(
+        EC.presence_of_element_located((By.XPATH, "//button[contains(., 'HALUK DURSUN KÜTÜPHANESİ')]"))
+    )
+    driver.execute_script("arguments[0].click();", kbtn)
+
+    print(f"Ön hazırlık için {ON_HAZIRLIK_SEANS} seansına tıklanıyor...")
+    s1 = w.until(
+        EC.element_to_be_clickable((By.XPATH, f"//a[contains(@data-seans, '{ON_HAZIRLIK_SEANS}')]"))
+    )
+    driver.execute_script("arguments[0].click();", s1)
+
+
+def rezervasyon_yap(driver, w):
+    """00:00 sonrası: tarih, seans, koltuk, EVET. Doğrulama sonucunu döner."""
+    print("Filtre açılıyor")
+    fbtn = w.until(EC.element_to_be_clickable((By.XPATH, "//i[contains(@class, 'acKapat')]")))
+    driver.execute_script("arguments[0].click();", fbtn)
+
+    print("En son tarih seçiliyor")
+    driver.execute_script(
+        "var ts = document.querySelector('select[name=\"tarih\"]');"
+        "if(ts){ ts.selectedIndex = ts.options.length - 1;"
+        "ts.dispatchEvent(new Event('change'));"
+        "if(window.jQuery){ jQuery(ts).trigger('change'); }}"
+    )
+    time.sleep(0.8)
+
+    print(f"Asıl rezervasyon için {HEDEF_SEANS} seansı seçiliyor...")
+    seans_js = """
+        var hedef = arguments[0];
+        var ss = document.querySelector('select[name="seans"]');
+        if(!ss){ return 'select-yok'; }
+        for(var i=0; i<ss.options.length; i++){
+            if(ss.options[i].text.includes(hedef) || ss.options[i].value.includes(hedef)){
+                ss.selectedIndex = i;
+                ss.dispatchEvent(new Event('change'));
+                if(window.jQuery){ jQuery(ss).trigger('change'); }
+                return 'ok';
+            }
+        }
+        if(ss.options.length > arguments[1]){
+            ss.selectedIndex = arguments[1];
+            ss.dispatchEvent(new Event('change'));
+            if(window.jQuery){ jQuery(ss).trigger('change'); }
+            return 'yedek:' + ss.options[arguments[1]].text;
+        }
+        return 'bulunamadi';
+    """
+    sonuc = driver.execute_script(seans_js, HEDEF_SEANS, YEDEK_INDEX)
+    if sonuc.startswith("yedek:"):
+        print(f"UYARI: {HEDEF_SEANS} bulunamadı, yedek seçenek seçildi -> {sonuc[6:]}")
+    elif sonuc != "ok":
+        raise RuntimeError(f"Seans seçilemedi ({sonuc}).")
+
+    print("Seansın yüklenmesi bekleniyor...")
+    time.sleep(1.5)
+
+    print(f"Koltuk seçiliyor ({KOLTUK})")
+    seat_js = """
+        var seat = document.querySelector("span[data-id='" + arguments[0] + "']");
+        if(!seat){ return 'koltuk-yok'; }
+        seat.scrollIntoView({block: 'center', inline: 'center'});
+        var rect = seat.getBoundingClientRect();
+        var cx = rect.left + (rect.width / 2);
+        var cy = rect.top + (rect.height / 2);
+        ['mousedown', 'mouseup', 'click'].forEach(function(eType) {
+            var ev = new MouseEvent(eType, { view: window, bubbles: true, cancelable: true, clientX: cx, clientY: cy });
+            seat.dispatchEvent(ev);
+        });
+        return 'ok:' + seat.className;
+    """
+    sonuc = driver.execute_script(seat_js, KOLTUK)
+    print("Koltuk sonucu:", sonuc)
+    if sonuc == "koltuk-yok":
+        raise RuntimeError(f"Koltuk {KOLTUK} sayfada bulunamadı.")
+
+    print("EVET butonu bekleniyor...")
+    btn = w.until(lambda d: d.find_element(By.CSS_SELECTOR, "button.evet"))
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'}); arguments[0].click();", btn)
+    time.sleep(2)
+
+    return sonucu_dogrula(driver)
+
+
 def main():
     tc, sifre = tc_sifre_al()
 
@@ -151,22 +260,25 @@ def main():
 
     basarili = False
     try:
-        if not giris_yap(driver, tc, sifre):
-            raise RuntimeError("Giriş yapılamadı (captcha/şifre).")
-
-        rmenu = w.until(EC.presence_of_element_located((By.XPATH, "//a[contains(., 'Rezervasyon')]")))
-        driver.execute_script("arguments[0].click();", rmenu)
-
-        kbtn = w.until(
-            EC.presence_of_element_located((By.XPATH, "//button[contains(., 'HALUK DURSUN KÜTÜPHANESİ')]"))
-        )
-        driver.execute_script("arguments[0].click();", kbtn)
-
-        print(f"Ön hazırlık için {ON_HAZIRLIK_SEANS} seansına tıklanıyor...")
-        s1 = w.until(
-            EC.element_to_be_clickable((By.XPATH, f"//a[contains(@data-seans, '{ON_HAZIRLIK_SEANS}')]"))
-        )
-        driver.execute_script("arguments[0].click();", s1)
+        # --- Hazırlık: hata olursa zaman sınırına kadar baştan dener ---
+        son = hazirlik_son_zaman()
+        hazir = False
+        tur = 0
+        while not hazir:
+            tur += 1
+            try:
+                print(f"Hazırlık turu {tur}")
+                hazirlik(driver, w, tc, sifre)
+                hazir = True
+            except Exception as e:
+                print("Hazırlık hatası:", str(e).splitlines()[0] if str(e) else type(e).__name__)
+                try:
+                    driver.save_screenshot("hata.png")
+                except Exception:
+                    pass
+                if simdi() >= son:
+                    raise RuntimeError("Hazırlık zaman sınırı içinde tamamlanamadı.")
+                time.sleep(3)
 
         gece_yarisi_bekle()
 
@@ -174,80 +286,25 @@ def main():
         driver.refresh()
         w.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
 
-        print("Filtre açılıyor")
-        fbtn = w.until(EC.element_to_be_clickable((By.XPATH, "//i[contains(@class, 'acKapat')]")))
-        driver.execute_script("arguments[0].click();", fbtn)
-
-        print("En son tarih seçiliyor")
-        driver.execute_script(
-            "var ts = document.querySelector('select[name=\"tarih\"]');"
-            "if(ts){ ts.selectedIndex = ts.options.length - 1;"
-            "ts.dispatchEvent(new Event('change'));"
-            "if(window.jQuery){ jQuery(ts).trigger('change'); }}"
-        )
-        time.sleep(0.8)
-
-        print(f"Asıl rezervasyon için {HEDEF_SEANS} seansı seçiliyor...")
-        seans_js = """
-            var hedef = arguments[0];
-            var ss = document.querySelector('select[name="seans"]');
-            if(!ss){ return 'select-yok'; }
-            for(var i=0; i<ss.options.length; i++){
-                if(ss.options[i].text.includes(hedef) || ss.options[i].value.includes(hedef)){
-                    ss.selectedIndex = i;
-                    ss.dispatchEvent(new Event('change'));
-                    if(window.jQuery){ jQuery(ss).trigger('change'); }
-                    return 'ok';
-                }
-            }
-            if(ss.options.length > arguments[1]){
-                ss.selectedIndex = arguments[1];
-                ss.dispatchEvent(new Event('change'));
-                if(window.jQuery){ jQuery(ss).trigger('change'); }
-                return 'yedek:' + ss.options[arguments[1]].text;
-            }
-            return 'bulunamadi';
-        """
-        sonuc = driver.execute_script(seans_js, HEDEF_SEANS, YEDEK_INDEX)
-        if sonuc.startswith("yedek:"):
-            print(f"UYARI: {HEDEF_SEANS} bulunamadı, listedeki yedek seçenek seçildi -> {sonuc[6:]}")
-        elif sonuc != "ok":
-            raise RuntimeError(f"Seans seçilemedi ({sonuc}).")
-
-        print("Seansın yüklenmesi bekleniyor...")
-        time.sleep(1.5)
-
-        print(f"Koltuk seçiliyor ({KOLTUK})")
-        seat_js = """
-            var seat = document.querySelector("span[data-id='" + arguments[0] + "']");
-            if(!seat){ return 'koltuk-yok'; }
-            seat.scrollIntoView({block: 'center', inline: 'center'});
-            var rect = seat.getBoundingClientRect();
-            var cx = rect.left + (rect.width / 2);
-            var cy = rect.top + (rect.height / 2);
-            ['mousedown', 'mouseup', 'click'].forEach(function(eType) {
-                var ev = new MouseEvent(eType, { view: window, bubbles: true, cancelable: true, clientX: cx, clientY: cy });
-                seat.dispatchEvent(ev);
-            });
-            return 'ok:' + seat.className;
-        """
-        sonuc = driver.execute_script(seat_js, KOLTUK)
-        print("Koltuk sonucu:", sonuc)
-        if sonuc == "koltuk-yok":
-            raise RuntimeError(f"Koltuk {KOLTUK} sayfada bulunamadı.")
-
-        print("EVET butonu bekleniyor...")
-        btn = w.until(
-            lambda d: d.find_element(By.CSS_SELECTOR, "button.evet")
-        )
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'}); arguments[0].click();", btn)
-        time.sleep(2)
-
-        basarili = sonucu_dogrula(driver)
-        if basarili:
-            print("Rezervasyon başarıyla tamamlandı!")
-        else:
-            print("UYARI: Rezervasyonun başarılı olduğu doğrulanamadı. sonuc.png ve yukarıdaki sayfa metnini kontrol et.")
+        # --- Rezervasyon: hata olursa yenileyip tekrar dener ---
+        for n in range(1, REZ_DENEME + 1):
+            try:
+                print(f"Rezervasyon denemesi {n}/{REZ_DENEME}")
+                basarili = rezervasyon_yap(driver, w)
+                if basarili:
+                    print("Rezervasyon başarıyla tamamlandı!")
+                    break
+                print("UYARI: Başarı doğrulanamadı. sonuc.png ve sayfa metnini kontrol et.")
+                break  # tıklama yapıldı; tekrar tıklayıp çift işlem yapma
+            except Exception as e:
+                print("Rezervasyon hatası:", str(e).splitlines()[0] if str(e) else type(e).__name__)
+                try:
+                    driver.save_screenshot("hata.png")
+                except Exception:
+                    pass
+                if n < REZ_DENEME:
+                    driver.refresh()
+                    w.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         time.sleep(5)
 
     except Exception as e:
