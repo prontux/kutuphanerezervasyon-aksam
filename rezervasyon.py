@@ -10,7 +10,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-print("Basliyor - Bulut Uyumlu Operasyon Modu")
+print("Basliyor - Bulut Uyumlu Operasyon Modu (19:00 Seansı)")
 
 opts = Options()
 # Bulut sunucuda ekran olmadığı için headless modu aktif:
@@ -92,7 +92,8 @@ try:
     kbtn = w.until(EC.presence_of_element_located((By.XPATH, "//button[contains(., 'HALUK DURSUN KÜTÜPHANESİ')]")))
     driver.execute_script("arguments[0].click();", kbtn)
 
-    s1 = w.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(@data-seans, '13:00')]")))
+    # 19:00 ön hazırlık seçimi
+    s1 = w.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(@data-seans, '19:00')]")))
     driver.execute_script("arguments[0].click();", s1)
 
     # --- GECE YARISI 00:00 BEKLEME DÖNGÜSÜ ---
@@ -118,8 +119,8 @@ try:
     driver.execute_script("var ts = document.querySelector('select[name=\"tarih\"]'); if(ts){ ts.selectedIndex = ts.options.length - 1; ts.dispatchEvent(new Event('change')); if(window.jQuery){ jQuery(ts).trigger('change'); }}")
     time.sleep(0.8)
 
-    print("17:00 seansı seçiliyor")
-    driver.execute_script("var ss = document.querySelector('select[name=\"seans\"]'); if(ss){ for(var i=0; i<ss.options.length; i++){ if(ss.options[i].text.includes('13:00')){ ss.selectedIndex = i; break; }} if(ss.selectedIndex <= 0 && ss.options.length > 1){ ss.selectedIndex = 1; } ss.dispatchEvent(new Event('change')); if(window.jQuery){ jQuery(ss).trigger('change'); }}")
+    print("19:00 seansı seçiliyor")
+    driver.execute_script("var ss = document.querySelector('select[name=\"seans\"]'); if(ss){ for(var i=0; i<ss.options.length; i++){ if(ss.options[i].text.includes('19:00')){ ss.selectedIndex = i; break; }} if(ss.selectedIndex <= 0 && ss.options.length > 1){ ss.selectedIndex = 1; } ss.dispatchEvent(new Event('change')); if(window.jQuery){ jQuery(ss).trigger('change'); }}")
     
     print("Seansın yüklenmesi bekleniyor...")
     time.sleep(1.5)
