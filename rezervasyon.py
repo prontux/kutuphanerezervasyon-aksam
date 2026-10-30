@@ -15,10 +15,10 @@ from selenium.webdriver.support import expected_conditions as EC
 
 URL = "https://ktprezervasyon.uskudar.bel.tr/?p=2"
 TZ = ZoneInfo("Europe/Istanbul")
-HEDEF_SEANS = "13:00"
+HEDEF_SEANS = "17:00"
 ON_HAZIRLIK_SEANS = "19:00"
 KOLTUK = "69-9"
-YEDEK_INDEX = 2  # 13:00 bulunamazsa listedeki 3. seçenek (index 0 = 1. seçenek)
+YEDEK_INDEX = 1  # 17:00 bulunamazsa listedeki 2. seçenek (index 0 = 1. seçenek)
 LOGIN_DENEME = 30      # giriş için en fazla deneme (zaman sınırı da var)
 HAZIRLIK_SON = (23, 55)  # hazırlık (giriş + 19:00) en geç bu saate kadar tekrar denenir
 REZ_DENEME = 3         # 00:00 sonrası rezervasyon adımı için deneme sayısı
