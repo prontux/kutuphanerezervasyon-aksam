@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import getpass
 import os
 import sys
@@ -19,14 +19,20 @@ ON_HAZIRLIK_SEANS = "19:00"
 KOLTUK = "69-9"
 YEDEK_INDEX = 2
 
-TC_KIMLIK = os.environ.get("TC_KIMLIK", "17348539445")
-SIFRE = os.environ.get("SIFRE", "Tahareda11!")
+# Kimlik bilgileri koda YAZILMAZ. GitHub'da: Settings > Secrets and variables >
+# Actions bolumunden TC_KIMLIK ve SIFRE adlariyla secret olarak ekleyin.
+TC_KIMLIK = os.environ.get("TC_KIMLIK", "").strip()
+SIFRE = os.environ.get("SIFRE", "")
 HEADLESS = True
 HEMEN_BASLA = True
 
 LOGIN_DENEME = 30
 HAZIRLIK_SON = (23, 55)
 REZ_DENEME = 3
+
+# GitHub runner'lari UTC calisir. Turkiye sabit UTC+3 oldugu icin tum saat/tarih
+# hesaplari bu dilime gore yapilir (makinenin saat diliminden bagimsiz).
+TZ = timezone(timedelta(hours=3))
 
 for yol in [
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
@@ -42,7 +48,7 @@ print("Basliyor...")
 
 
 def simdi():
-  return datetime.now()
+  return datetime.now(TZ)
 
 
 def hazirlik_son_zaman():
@@ -55,14 +61,16 @@ def hazirlik_son_zaman():
 
 
 def tc_sifre_al():
-  tc = TC_KIMLIK or os.environ.get("TC_KIMLIK") or input("TC Kimlik No: ").strip()
-  sifre = (
-      SIFRE
-      or os.environ.get("SIFRE")
-      or getpass.getpass("Sifre (gizli): ")
-  )
+  tc = TC_KIMLIK
+  sifre = SIFRE
+  # Sadece terminalde elle calistirirken sorar; GitHub Actions'ta sormaz.
+  if sys.stdin and sys.stdin.isatty():
+    tc = tc or input("TC Kimlik No: ").strip()
+    sifre = sifre or getpass.getpass("Sifre (gizli): ")
   if not tc or not sifre:
-    raise RuntimeError("TC veya sifre bos.")
+    raise RuntimeError(
+        "TC_KIMLIK / SIFRE tanimli degil. GitHub Secrets'a ekleyin."
+    )
   return tc, sifre
 
 
@@ -270,6 +278,7 @@ def main():
   opts.add_argument("--no-sandbox")
   opts.add_argument("--disable-dev-shm-usage")
   opts.add_argument("--start-maximized")
+  opts.add_argument("--window-size=1920,1080")
   driver = webdriver.Chrome(options=opts)
   w = WebDriverWait(driver, 20)
 
