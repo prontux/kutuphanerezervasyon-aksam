@@ -15,10 +15,10 @@ from selenium.webdriver.support import expected_conditions as EC
 
 URL = "https://ktprezervasyon.uskudar.bel.tr/?p=2"
 TZ = ZoneInfo("Europe/Istanbul")
-HEDEF_SEANS = "17:00"
+HEDEF_SEANS = "13:00"
 ON_HAZIRLIK_SEANS = "19:00"
 KOLTUK = "69-9"
-YEDEK_INDEX = 1  # 17:00 bulunamazsa listedeki 2. seçenek (index 0 = 1. seçenek)
+YEDEK_INDEX = 2  # 13:00 bulunamazsa listedeki 3. seçenek (index 0 = 1. seçenek)
 LOGIN_DENEME = 30      # giriş için en fazla deneme (zaman sınırı da var)
 HAZIRLIK_SON = (23, 55)  # hazırlık (giriş + 19:00) en geç bu saate kadar tekrar denenir
 REZ_DENEME = 3         # 00:00 sonrası rezervasyon adımı için deneme sayısı
@@ -231,6 +231,7 @@ def rezervasyon_yap(driver, w):
             var ev = new MouseEvent(eType, { view: window, bubbles: true, cancelable: true, clientX: cx, clientY: cy });
             seat.dispatchEvent(ev);
         });
+        if (window.jQuery) { jQuery("span[data-id='" + arguments[0] + "']").trigger('click'); }
         return 'ok:' + seat.className;
     """
     sonuc = driver.execute_script(seat_js, KOLTUK)
@@ -239,8 +240,22 @@ def rezervasyon_yap(driver, w):
         raise RuntimeError(f"Koltuk {KOLTUK} sayfada bulunamadı.")
 
     print("EVET butonu bekleniyor...")
-    btn = w.until(lambda d: d.find_element(By.CSS_SELECTOR, "button.evet"))
-    driver.execute_script("arguments[0].scrollIntoView({block:'center'}); arguments[0].click();", btn)
+    w.until(lambda d: d.find_element(By.CSS_SELECTOR, "button.evet"))
+    btn_js = """
+        var btn = document.querySelector('button.btn.btn-success.evet') || document.querySelector('button.evet');
+        if(!btn){ return 'evet-yok'; }
+        btn.scrollIntoView({block: 'center', inline: 'center'});
+        ['mousedown', 'mouseup', 'click'].forEach(function(eType) {
+            var ev = new MouseEvent(eType, { view: window, bubbles: true, cancelable: true });
+            btn.dispatchEvent(ev);
+        });
+        btn.click();
+        return 'ok';
+    """
+    sonuc = driver.execute_script(btn_js)
+    print("EVET sonucu:", sonuc)
+    if sonuc != "ok":
+        raise RuntimeError("EVET butonu bulunamadı.")
     time.sleep(2)
 
     return sonucu_dogrula(driver)
