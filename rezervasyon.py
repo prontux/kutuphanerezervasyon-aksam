@@ -1,13 +1,17 @@
 from datetime import datetime, timedelta, timezone
 import getpass
 import os
+import ssl
 import sys
 import time
+import urllib.error
+import urllib.request
 
 import cv2
 import pytesseract
 from PIL import Image
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -74,7 +78,48 @@ def tc_sifre_al():
   return tc, sifre
 
 
+def kisa_mesaj(e):
+  satirlar = str(e).strip().splitlines()
+  return satirlar[0][:200] if satirlar else ""
+
+
+def site_erisim_testi():
+  """Chrome'dan once siteye basit bir HTTP istegi atar ve sonucu loglar."""
+  ctx = ssl.create_default_context()
+  ctx.check_hostname = False
+  ctx.verify_mode = ssl.CERT_NONE
+  istek = urllib.request.Request(URL, headers={"User-Agent": "Mozilla/5.0"})
+  try:
+    with urllib.request.urlopen(istek, timeout=20, context=ctx) as r:
+      print(f"Erisim testi: HTTP {r.status}, {len(r.read(200000))} bayt")
+  except urllib.error.HTTPError as e:
+    print(f"Erisim testi: HTTP {e.code} (site cevap verdi ama istegi reddetti)")
+  except Exception as e:
+    print(f"Erisim testi BASARISIZ: {type(e).__name__}: {kisa_mesaj(e)}")
+    print("  -> Site bu makinenin IP'sinden acilmiyor olabilir (yurt disi / veri merkezi IP engeli).")
+
+
+def sayfayi_ac(driver, url):
+  try:
+    driver.get(url)
+  except TimeoutException:
+    print("Sayfa yukleme zaman asimi, yukleme durdurulup devam ediliyor.")
+    try:
+      driver.execute_script("window.stop();")
+    except Exception:
+      pass
+
+
+def sayfa_durumu(driver):
+  try:
+    govde = " ".join(driver.find_element(By.TAG_NAME, "body").text.split())[:200]
+    print(f"  Sayfa: baslik={driver.title!r} url={driver.current_url} govde={govde!r}")
+  except Exception as e:
+    print(f"  Sayfa durumu okunamadi: {type(e).__name__}")
+
+
 def captcha_oku(img, deneme=10):
+  son_hata = None
   for _ in range(deneme):
     try:
       img.screenshot("c.png")
@@ -91,9 +136,11 @@ def captcha_oku(img, deneme=10):
       ).strip()
       if len(code) == 6 and code.isdigit():
         return code
-    except Exception:
-      pass
+    except Exception as e:
+      son_hata = e
     time.sleep(0.1)
+  if son_hata is not None:
+    print(f"  OCR hatasi: {type(son_hata).__name__}: {kisa_mesaj(son_hata)}")
   return None
 
 
@@ -105,7 +152,7 @@ def giris_yap(driver, tc, sifre):
       break
     print(f"Giris denemesi {n}/{LOGIN_DENEME}")
     try:
-      driver.get(URL)
+      sayfayi_ac(driver, URL)
       time.sleep(3)
       w = WebDriverWait(driver, 20)
       try:
@@ -150,7 +197,8 @@ def giris_yap(driver, tc, sifre):
       print("Giris basarili.")
       return True
     except Exception as e:
-      print(f"Giris hatasi: {type(e).__name__}")
+      print(f"Giris hatasi: {type(e).__name__}: {kisa_mesaj(e)}")
+      sayfa_durumu(driver)
   return False
 
 
@@ -210,7 +258,7 @@ def rezervasyon_yap(driver, w):
   hedef_tarih = str(d.year) + "-" + str(d.month).zfill(2) + "-" + str(d.day).zfill(2)
   url = "https://ktprezervasyon.uskudar.bel.tr/?p=1&dil=0&salon=69&tarih=" + hedef_tarih
   print("Hedef tarihe gidiliyor:", hedef_tarih)
-  driver.get(url)
+  sayfayi_ac(driver, url)
   time.sleep(2)
 
   seans_js = (
@@ -279,7 +327,9 @@ def main():
   opts.add_argument("--disable-dev-shm-usage")
   opts.add_argument("--start-maximized")
   opts.add_argument("--window-size=1920,1080")
+  site_erisim_testi()
   driver = webdriver.Chrome(options=opts)
+  driver.set_page_load_timeout(45)
   w = WebDriverWait(driver, 20)
 
   basarili = False
