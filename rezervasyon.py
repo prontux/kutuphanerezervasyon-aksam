@@ -19,18 +19,22 @@ ON_HAZIRLIK_SEANS = "19:00"
 KOLTUK = "69-9"
 YEDEK_INDEX = 2
 
-TC_KIMLIK = "17348539445"
-SIFRE = "Tahareda11!"
-HEADLESS = True
+# GitHub Secrets üzerinden veya doğrudan buradaki değişkenlerden okunur
+TC_KIMLIK = os.environ.get("TC_KIMLIK", "17348539445")
+SIFRE = os.environ.get("SIFRE", "Tahareda11!")
+HEADLESS = True  # GitHub sunucularında arayüz olmadığı için True olmalı
 HEMEN_BASLA = True
 
 LOGIN_DENEME = 30
 HAZIRLIK_SON = (23, 55)
 REZ_DENEME = 3
 
+# Hem Windows hem Linux (GitHub Actions) için Tesseract yolları
 for yol in [
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
     r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    "/usr/bin/tesseract",
+    "/usr/local/bin/tesseract",
 ]:
   if os.path.exists(yol):
     pytesseract.pytesseract.tesseract_cmd = yol
@@ -239,48 +243,4 @@ def main():
   opts = Options()
   if HEADLESS:
     opts.add_argument("--headless=new")
-  opts.add_argument("--start-maximized")
-  driver = webdriver.Chrome(options=opts)
-  w = WebDriverWait(driver, 20)
-
-  basarili = False
-  try:
-    son = hazirlik_son_zaman()
-    hazir = False
-    while not hazir:
-      try:
-        hazirlik(driver, w, tc, sifre)
-        hazir = True
-      except Exception as e:
-        print("Hazirlik hatasi:", type(e).__name__)
-        driver.save_screenshot("hata.png")
-        if simdi() >= son:
-          raise RuntimeError("Hazirlik zaman asimi.")
-        time.sleep(3)
-
-    gece_yarisi_bekle()
-
-    for n in range(1, REZ_DENEME + 1):
-      try:
-        print(f"Rezervasyon denemesi {n}/{REZ_DENEME}")
-        basarili = rezervasyon_yap(driver, w)
-        if basarili:
-          print("Rezervasyon basarili!")
-          break
-        break
-      except Exception as e:
-        print("Rezervasyon hatasi:", type(e).__name__)
-        driver.save_screenshot("hata.png")
-        if n < REZ_DENEME:
-          time.sleep(1)
-    time.sleep(5)
-  except Exception as e:
-    print("Kritik Hata:", str(e))
-    driver.save_screenshot("hata.png")
-  finally:
-    driver.quit()
-  sys.exit(0 if basarili else 1)
-
-
-if __name__ == "__main__":
-  main()
+  opts.add_argument("--
